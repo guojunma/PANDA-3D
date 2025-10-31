@@ -8,6 +8,7 @@ import sys,os
 import datetime
 import pickle
 import copy
+from tqdm import tqdm
 from copy import deepcopy
 
 import torch
@@ -29,18 +30,26 @@ import esm
 from model_util import get_n_params, CreateDataset_Server, BatchGvpesmConverter
 from torch.utils.data import DataLoader
 
+print(f"CUDA available: {torch.cuda.is_available()}")
+print(f"Current device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
+print(f"Memory allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
+
 def predicate(model, device, dataloader, prediction_go_mask):
     model.eval()
     loss_batch = []
     protein, prediction = [], []
     with torch.no_grad():
-        for i,data in enumerate(dataloader):
+        # Create progress bar
+        pbar = tqdm(dataloader, desc="Processing proteins", unit="protein")
+        for i,data in enumerate(pbar):
             model_out = model(data['esm1vs'],data['coords'], data['seqs'], data['padding_mask'], data['plddts'],
                         return_all_hiddens=False)
             logits = torch.squeeze(model_out[0],1)
             protein.append(data['proteins'][0])
             prediction_ = torch.sigmoid(logits).cpu().detach().numpy()[:,prediction_go_mask]
             prediction.append(prediction_[0])
+            # Update progress bar description
+            pbar.set_description(f"Processing protein {data['proteins'][0]}")
     test_df = pd.DataFrame({'protein': protein,
                             'prediction': prediction})
     return test_df
@@ -96,9 +105,31 @@ if True:
     model.load_state_dict(torch.load(out_model,map_location='cuda:0'))
     model.to(model_args.device[0])
     
+    print("Step 2: Creating dataset server...")
+    step2_time = time.time()
     test_data = CreateDataset_Server(input_dir, batch_size=1)
+    print(f"Step 2 completed in {time.time() - step2_time:.2f} seconds")
+
+    print("Step 3: Running batch_gvpesm_converter...")
+    step3_time = time.time()
     batch_gvpesm_converter = BatchGvpesmConverter(alphabet, alphabet_go, model_args.coords_mask_plddt_th, model_args.device[0])
+    print(f"Step 3 completed in {time.time() - step3_time:.2f} seconds")
+
+    print("Step 4: Loading data...")
+    step4_time = time.time()
     test_dataloader = DataLoader(test_data, batch_size= 1, shuffle=True, collate_fn=batch_gvpesm_converter)
+    print(f"Step 4 completed in {time.time() - step4_time:.2f} seconds")
+    
+    print("Step 5: Starting prediction...")
+    step5_time = time.time()
     test_df = predicate(model, model_args.device[0], test_dataloader, prediction_go_mask)
+    print(f"Step 5 completed in {time.time() - step5_time:.2f} seconds")
+
+    print("Step 6: Writing results to file...")
+    step6_time = time.time()
     prediction2text(alphabet_go, test_df,  out_file)
-    #print(f'done, save to {out_file}')
+    print(f"Step 6 completed in {time.time() - step6_time:.2f} seconds")
+    
+    total_time = time.time() - start
+    print(f"\nTotal execution time: {total_time:.2f} seconds")
+    print(f'Results saved to {out_file}')
