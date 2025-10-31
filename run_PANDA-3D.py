@@ -108,6 +108,11 @@ if True:
     print("Step 2: Creating dataset server...")
     step2_time = time.time()
     test_data = CreateDataset_Server(input_dir, batch_size=1)
+
+    # Save the dataset
+    dataset_save_path = os.path.join(out_dir, 'embedded_dataset.pkl')
+    test_data.save_dataset(dataset_save_path)
+    print(f"Dataset saved to: {dataset_save_path}")
     print(f"Step 2 completed in {time.time() - step2_time:.2f} seconds")
 
     print("Step 3: Running batch_gvpesm_converter...")
