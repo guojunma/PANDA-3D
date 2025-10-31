@@ -8,6 +8,7 @@ import pickle
 import glob
 import torch
 import esm
+from tqdm import tqdm
 from torch.utils.data import Dataset
 from util import CoordBatchConverter, load_coords
 from Bio import SeqIO
@@ -54,7 +55,8 @@ class CreateDataset_Server(Dataset):
         self.batch_converter = alphabet.get_batch_converter()
         # gather features
         proteins, esm1vs, coords, seqs, padding_mask, plddts = [], [], [], [], [], []
-        for pdb_f in self.pdb_fs:
+        # Add progress bar for feature extraction
+        for pdb_f in tqdm(self.pdb_fs, desc="Processing PDB files", unit="file"):
             protein_ = pdb_f.split('/')[-1].replace('.pdb','')
             chain_, seq_ = self.pdb_fasta(pdb_f)
             coord_, _ = load_coords(pdb_f, chain_)
@@ -64,6 +66,17 @@ class CreateDataset_Server(Dataset):
             #print(pdb_f, chain_, len(seq_), type(coord_), type(plddt_), type(esm_))
             proteins.append(protein_); esm1vs.append(esm_); coords.append(coord_); seqs.append(seq_); plddts.append(plddt_)
         self.df_ = pd.DataFrame({'protein':proteins, 'esm1v':esm1vs, 'coords':coords, 'seq':seqs, 'plddt':plddts})
+
+    def save_dataset(self, output_path):
+        """Save the dataset DataFrame to a pickle file.
+        
+        Args:
+            output_path (str): Path where to save the dataset. Should end with .pkl
+        """
+        if not output_path.endswith('.pkl'):
+            output_path += '.pkl'
+        self.df_.to_pickle(output_path)
+        print(f"Dataset saved to {output_path}")
 
     def pdb_fasta(self, f_):
         """assume only one chain in pdb"""
@@ -112,7 +125,7 @@ class BatchGvpesmConverter(object):
         batch_size = len(esm1vs)
         max_len = max(esm1v.shape[0] for esm1v in esm1vs)
         esm1vs_padded = torch.full((batch_size,max_len+2,esm1vs[0].shape[1]),0.)
-        for i, esm1v in enumerate(esm1vs):
+        for i, esm1v in tqdm(enumerate(esm1vs), desc="Processing ESM embeddings", total=batch_size, unit="seq"):
             esm1vs_padded[i,1:esm1v.shape[0]+1] = torch.from_numpy(esm1v)
         if self.device is not None:
             esm1vs_padded = esm1vs_padded.to(self.device)
